@@ -1,0 +1,4 @@
+#!/bin/sh
+
+launchctl stop com.zx02.xenlived
+launchctl load -w /Library/LaunchDaemons/com.zx02.xenlived.plist
