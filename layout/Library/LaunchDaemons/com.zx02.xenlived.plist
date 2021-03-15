@@ -6,11 +6,13 @@
         <true/>
         <key>Label</key>
         <string>com.zx02.xenlived</string>
-        <key>Program</key>
+        <key>ProgramArguments</key>
+        <array>
         <string>/usr/local/bin/xenlived</string>
+        </array>
         <key>RunAtLoad</key>
         <true/>
         <key>LaunchOnlyOnce</key>
-        <true/>
+        <false/>
 </dict>
 </plist>

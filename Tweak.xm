@@ -3,10 +3,9 @@
 #import <dlfcn.h>
 #import "XenHWidgetController.h"
 #import "XenHWidgetConfiguration.h"
-#import "xenlive-protocol.h"
+#include "NSDistributedNotificationCenter.h"
 
-#define STREQ(a, b) [a isEqualToString: b]
-#define ACTION_IS(type) STREQ(action.type, kRequestType##type)
+#define HTTPPORT 2021
 
 %group main
 
@@ -14,90 +13,78 @@
 
 - (instancetype) init {
     XENHWidgetController *s = %orig;
-
-    // Doesn't look good but smh we can't create a new method on this class.
-    [NSNotificationCenter.defaultCenter
-        addObserverForName: @"XenLiveReceivedUpdate"
+    [NSDistributedNotificationCenter.defaultCenter
+        addObserver: s
+        selector: sel_registerName("didReceiveRemoteNotification:")
+        name: @"XenLiveReceivedUpdate"
         object: nil
-        queue: nil
-        usingBlock: ^(NSNotification *notification) {
-            NSString *name = s.widgetIndexFile.stringByDeletingLastPathComponent.lastPathComponent;
-            XenLiveAction *action = (XenLiveAction *) notification.object;
-            // Check if the action's targeted at this widget.
-            if (STREQ(action.widgetName, name)) {
-                // 1: Get filePath of targeted file.
-                NSString *folder = s.widgetIndexFile.stringByDeletingLastPathComponent;
-                NSString *filePath = [folder stringByAppendingPathComponent: action.fileRelativePath];
-                // 2: Perform action.
-                // We try to do things the safest way to prevent mis-syncs as much as possible.
-                if (ACTION_IS(Update) || ACTION_IS(Create) || ACTION_IS(CreateNoReload)) {
-                    // Purge file by removing it.
-                    if ([NSFileManager.defaultManager fileExistsAtPath: filePath]) {
-                        [NSFileManager.defaultManager removeItemAtPath: filePath error: nil];
-                    }
-                    // Create intermediate directories if necessary.
-                    
-                    // Create new file with data.
-                    [NSFileManager.defaultManager createFileAtPath: filePath contents: action.data attributes: nil];
-                    if (ACTION_IS(CreateNoReload)) return;
-                }
-                else if (ACTION_IS(Delete) || ACTION_IS(DeleteNoReload)) {
-                    [NSFileManager.defaultManager removeItemAtPath: filePath error: nil];
-                    if (ACTION_IS(DeleteNoReload)) return;
-                }
-                // 3: Refresh XenHTML
-                if (STREQ(action.fileRelativePath, @"config.json")) {
-                    // If the user changed the config, we should inject the new config params and perform full reload.
-                    // Load new config.
-                    XENHWidgetConfiguration *config = [%c(XENHWidgetConfiguration) defaultConfigurationForPath: filePath];
-                    // Inject config into metadata.
-                    NSMutableDictionary *newMetadata = config.serialise.mutableCopy;
-                    // Preserve x and y values.
-                    for (id key in self.widgetMetadata) {
-                        if ([key hasPrefix: @"x"] || [key hasPrefix: @"y"]) {
-                            [newMetadata setValue: [self.widgetMetadata valueForKey: key] forKey: key];
-                        }
-                    }
-                    // Finally overwrite widgetMetadata.
-                    self.widgetMetadata = newMetadata;
-                    // Reload widget.
-                    [self reloadWidget];
-                }
-                else {
-                    // Simply reload the webview.
-                    [self.webView reload];
-                }
-            }
-        }];
+        // NSNotificationSuspensionBehaviorDeliverImmediately = 4
+        suspensionBehavior: 4];
     return s;
 }
 
+%new
+- (void) didReceiveRemoteNotification: (NSNotification *) notification {
+    NSString *notiWidgetPath = [notification.userInfo objectForKey: @"widgetPath"];
+    // Check if the action's targeted at this widget.
+    if ([self.widgetIndexFile hasPrefix: notiWidgetPath]) {
+        // 3: Refresh XenHTML
+        if ([[notification.userInfo objectForKey: @"action"] isEqualToString: @"R"]) {
+            // If the user changed the config, we should inject the new config params and perform full reload.
+            // Load new config.
+            XENHWidgetConfiguration *config = [%c(XENHWidgetConfiguration) defaultConfigurationForPath:
+                                                [notiWidgetPath stringByAppendingPathComponent: @"config.json"]];
+            // Inject config into metadata.
+            NSMutableDictionary *newMetadata = config.serialise.mutableCopy;
+            // Preserve x and y values.
+            for (id key in self.widgetMetadata) {
+                if ([key hasPrefix: @"x"] || [key hasPrefix: @"y"]) {
+                    [newMetadata setValue: [self.widgetMetadata valueForKey: key] forKey: key];
+                }
+            }
+            // Finally overwrite widgetMetadata.
+            self.widgetMetadata = newMetadata;
+            // Reload widget.
+            [self reloadWidget];
+        }
+        else {
+            // Simply reload the webview.
+            [self.webView reload];
+        }
+    }
+}
+
 %end
 
 %end
 
-static void loadLookinServer() {
-    const char* lookinPath = "/Library/Frameworks/LookinServer.framework/LookinServer";
-    if(!dlopen(lookinPath, RTLD_NOW)) {
-        const char* error = dlerror();
-        NSLog(@"LookinServer failed to load with error: %s", error);
-    }
-    else {
-        NSLog(@"LookinServer loaded.");
-    }
-}
-
-static void newthingCallback(CFNotificationCenterRef center, void * observer, CFStringRef name, void const * object, CFDictionaryRef userInfo) {
-    NSData *data = [NSData dataWithContentsOfFile: @"/tmp/xenlived"];
-    XenLiveAction *action = [[%c(XenLiveAction) alloc] initWithData: data];
-    NSLog(@"got action: %@", action);
-    [NSNotificationCenter.defaultCenter postNotificationName: @"XenLiveReceivedUpdate" object: action];
-}
+// MHD_Result answer_to_connection(void *cls, struct MHD_Connection *connection,
+//                          const char *url,
+//                          const char *method, const char *version,
+//                          const char *upload_data,
+//                          size_t *upload_data_size, void **con_cls) {
+//     struct MHD_Response *response;
+//     MHD_Result ret;
+//     // Main get request.
+//     if (strcmp(method, "GET") == 0) {
+//         [NSNotificationCenter.defaultCenter postNotificationName: @"XenLiveReceivedUpdate" object: nil];
+//         NSLog(@"url: %s", url);
+//         NSLog(@"data size: %lu", *upload_data_size);
+//         // Send response.
+//         response = MHD_create_response_from_buffer(7, (void*) "Gotit\n", MHD_RESPMEM_PERSISTENT);
+//         ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+//         MHD_destroy_response(response);
+//         return ret;
+//     }
+//     // Handle other requests.
+//     response = MHD_create_response_from_buffer(strlen("Unsupported request\n"), (void *) "Unsupported request\n", MHD_RESPMEM_PERSISTENT);
+//     ret = MHD_queue_response(connection, MHD_HTTP_BAD_REQUEST, response);
+//     MHD_destroy_response(response);
+//     return ret;
+// }
 
 %ctor {
     %init(main);
-    // loadLookinServer();
-    // Listen for respring requests from pref.
-	CFNotificationCenterRef center = CFNotificationCenterGetDarwinNotifyCenter();
-	CFNotificationCenterAddObserver(center, nil, newthingCallback, CFSTR("com.zx02.xenlive/newthing"), nil, CFNotificationSuspensionBehaviorDeliverImmediately);
+    // Start http server.
+    // static struct MHD_Daemon *daemon = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY, HTTPPORT, 0, 0, &answer_to_connection, 0, MHD_OPTION_END);
 }

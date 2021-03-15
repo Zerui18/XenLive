@@ -4,10 +4,13 @@ CFLAGS = -Wno-error
 
 include $(THEOS)/makefiles/common.mk
 
+THEOS_DEVICE_IP = localhost
+THEOS_DEVICE_PORT = 2222
+
 TOOL_NAME = xenlived
 
 xenlived_FILES = main.m
-xenlived_CFLAGS = -fobjc-arc -I/Users/zeruichen/Downloads/libmicrohttpd-0.9.72/src/include
+xenlived_CFLAGS = -fobjc-arc -Iinclude -Wno-error -I..
 xenlived_OBJ_FILES = ./libmicrohttpd.a
 xenlived_CODESIGN_FLAGS = -Sentitlements.plist
 xenlived_INSTALL_PATH = /usr/local/bin
