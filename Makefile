@@ -12,8 +12,8 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = XenLive
 PACKAGE_VERSION = 0.0.1
 
-XenLive_FILES = Tweak.xm echo.mm
-XenLive_CFLAGS = -fobjc-arc
+XenLive_FILES = Tweak.xm xenlive-protocol.m
+XenLive_CFLAGS = -fobjc-arc -Wno-error
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 SUBPROJECTS += xenlived
