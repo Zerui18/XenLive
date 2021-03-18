@@ -14,6 +14,7 @@ static void notifyTweak(const char *url) {
         @"action" : [[NSString alloc] initWithBytes: url+1 length: 1 encoding: NSUTF8StringEncoding],
         @"widgetPath" : [[NSString alloc] initWithBytes: url+2 length: len-2 encoding: NSUTF8StringEncoding]
     } deliverImmediately: true];
+    NSLog(@"notification posted");
 }
 
 enum MHD_Result answer_to_connection(void *cls, struct MHD_Connection *connection,

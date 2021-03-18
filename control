@@ -6,4 +6,4 @@ Description: An awesome MobileSubstrate tweak!
 Maintainer: Zerui Chen
 Author: Zerui Chen
 Section: Tweaks
-Depends: mobilesubstrate (>= 0.9.5000)
+Depends: mobilesubstrate (>= 0.9.5000), rsync (>=3.0.0), openssh
