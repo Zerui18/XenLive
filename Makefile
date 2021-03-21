@@ -6,7 +6,7 @@ THEOS_DEVICE_IP = 192.168.0.112
 THEOS_DEVICE_PORT = 22
 
 TWEAK_NAME = XenLive
-PACKAGE_VERSION = 0.0.1
+PACKAGE_VERSION = 1.0.0
 
 include $(THEOS)/makefiles/common.mk
 
