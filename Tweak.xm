@@ -16,7 +16,7 @@
     [NSDistributedNotificationCenter.defaultCenter
         addObserver: s
         selector: sel_registerName("didReceiveRemoteNotification:")
-        name: @"XenLiveReceivedUpdate"
+        name: @"XenLiveRefresh"
         object: nil
         // NSNotificationSuspensionBehaviorDeliverImmediately = 4
         suspensionBehavior: 4];
@@ -25,15 +25,17 @@
 
 %new
 - (void) didReceiveRemoteNotification: (NSNotification *) notification {
-    NSString *notiWidgetPath = [notification.userInfo objectForKey: @"widgetPath"];
+    NSString *widgetName = [notification.userInfo objectForKey: @"widgetName"];
+    NSNumber *isConfig = [notification.userInfo objectForKey: @"isConfig"];
     // Check if the action's targeted at this widget.
-    if ([self.widgetIndexFile hasPrefix: notiWidgetPath]) {
+    NSString *selfWidgetName = self.widgetIndexFile.stringByDeletingLastPathComponent.lastPathComponent;
+    if ([selfWidgetName isEqualToString: widgetName]) {
         // 3: Refresh XenHTML
-        if ([[notification.userInfo objectForKey: @"action"] isEqualToString: @"R"]) {
+        if (isConfig.boolValue) {
             // If the user changed the config, we should inject the new config params and perform full reload.
             // Load new config.
-            XENHWidgetConfiguration *config = [%c(XENHWidgetConfiguration) defaultConfigurationForPath:
-                                                [notiWidgetPath stringByAppendingPathComponent: @"config.json"]];
+            NSString *configPath = [self.widgetIndexFile.stringByDeletingLastPathComponent stringByAppendingPathComponent: @"config.json"];
+            XENHWidgetConfiguration *config = [%c(XENHWidgetConfiguration) defaultConfigurationForPath: configPath];
             // Inject config into metadata.
             NSMutableDictionary *newMetadata = config.serialise.mutableCopy;
             // Preserve x and y values.

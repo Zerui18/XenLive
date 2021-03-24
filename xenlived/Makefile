@@ -9,9 +9,8 @@ THEOS_DEVICE_PORT = 2222
 
 TOOL_NAME = xenlived
 
-xenlived_FILES = main.m
-xenlived_CFLAGS = -fobjc-arc -Iinclude -Wno-error -I..
-xenlived_OBJ_FILES = ./libmicrohttpd.a
+xenlived_FILES = src/main.m src/tools.c
+xenlived_CFLAGS = -fobjc-arc -Wno-error -I.. -I includes
 xenlived_CODESIGN_FLAGS = -Sentitlements.plist
 xenlived_INSTALL_PATH = /usr/local/bin
 
