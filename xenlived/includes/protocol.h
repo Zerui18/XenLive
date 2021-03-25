@@ -3,6 +3,7 @@ typedef enum {
     request_delete = 1,
     request_create_folder = 2,
     request_clear_folder = 3,
+    request_refresh = 4,
 } request_type;
 
 typedef struct {

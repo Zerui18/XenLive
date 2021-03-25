@@ -1,20 +1,19 @@
-#import <Foundation/Foundation.h>
 #include <libgen.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <signal.h>
-#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <poll.h>
+#include <pthread.h>
 #include "protocol.h"
 #include "tools.h"
-#import "NSDistributedNotificationCenter.h"
 
 #define RESP_OK "ok!"
 #define RESP_ERR "err"
@@ -29,14 +28,8 @@ int is_regular_file(const char *path) {
     return S_ISREG(path_stat.st_mode);
 }
 
-static void notify_tweak(char *widget_name, char is_config) {
-    NSDistributedNotificationCenter *center = NSDistributedNotificationCenter.defaultCenter;
-	[center postNotificationName: @"XenLiveRefresh" object: nil userInfo: @{
-        @"widgetName" : [NSString stringWithUTF8String: widget_name],
-        @"isConfig" : [NSNumber numberWithChar: is_config]
-    } deliverImmediately: true];
-    NSLog(@"notification posted");
-}
+// Found in objc.m
+void notify_tweak(char *widget_name, char is_config);
 
 static void handle_request(request_header header, int sock_fd) {
     char *widget_name = read_into_cstr(sock_fd, header.widget_name_len);
@@ -47,11 +40,12 @@ static void handle_request(request_header header, int sock_fd) {
     // Success only reflect the status of getting the file_path correctly,
     // as well as writing to the file. We don't want to give too many errors.
     char success = 1;
-
+    // NOTE: xenlived will be running as root with group mobile,
+    // so we want to grant same file permissions to root and group mobile.
     switch (header.opcode) {
         case request_write: {
             // Open file, allowing creation and always clearing initial contents.
-            int target_fd = open(file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            int target_fd = open(file_path, O_WRONLY | O_CREAT | O_TRUNC, 0664);
             success = copy_into_file(sock_fd, target_fd, header.file_data_len);
             break;
         }
@@ -64,17 +58,25 @@ static void handle_request(request_header header, int sock_fd) {
             }
             break;
         case request_create_folder:
-            mkdir(file_path, 0744);
+            mkdir(file_path, 0774);
             break;
         case request_clear_folder:
-            // Here the file_path would be the root folder of the widget,
-            // so we tell rm_tree to skip the root folder.
+            // Here the file_path would be the root folder of the widget.
+            // To allow for transfering of new widgets, we create the folder if not exists.
+            mkdir(file_path, 0774);
+            // rm_tree should skip the root folder.
             rm_tree(file_path, 1);
             break;
+        case request_refresh:
+            // Perform full reload.
+            notify_tweak(widget_name, 1);
+            goto end;
     }
 
     char *filename = basename(file_path);
     notify_tweak(widget_name, strcmp(filename, "config.json") == 0);
+
+    end:
 
     free(widget_name);
     free(widget_type);
@@ -84,8 +86,15 @@ static void handle_request(request_header header, int sock_fd) {
     write(sock_fd, success ? RESP_OK : RESP_ERR, 4);
 }
 
-static void handle_connection(int sock_fd) {
+// Note: this is run is a new thread.
+static void *handle_connection(int *sock_fd_ptr) {
+    int sock_fd = *sock_fd_ptr;
+    printf("handle connection with fd: %d\n", sock_fd);
+    free(sock_fd_ptr);
+
+    int idle_cnt = 0;
     request_header header;
+
     while (1) {
         // Block till new data is available.
         struct pollfd pollfd = {
@@ -94,26 +103,50 @@ static void handle_connection(int sock_fd) {
             .revents = 0
         };
         // 5s of timeout, bad things might happen if we do -1.
-        poll(&pollfd, 1, 5000);
-        if (pollfd.revents & POLLIN) {
+        poll(&pollfd, 1, 1000);
+        printf("client socket poll %d:\n", sock_fd);
+        // Case 1: socket closed.
+        if (pollfd.revents & POLLHUP) {
+            // Socket closed by client, exit thread.
+            printf("client socket closed %d\n", sock_fd);
+            break;
+        }
+        // Case 2: new connection.
+        else if (pollfd.revents & POLLIN) {
+            idle_cnt = 0;
             // Data is available.
+            printf("client socket available %d %d\n", sock_fd, pollfd.revents & POLLHUP);
             read(sock_fd, &header, sizeof(header));
             // Validate request header.
             if (strcmp(header.magic, "ZXL\0") == 0)
                 handle_request(header, sock_fd);
         }
-        else if (pollfd.revents & POLLHUP) {
-            // Socket closed.
+        // Case 3: just empty.
+        else if (++idle_cnt == 1800) {
+            // 30 mins of inactivity, client might be offline.
+            // Close socket and exit thread.
+            printf("idle_cnt == 1800, closing %d\n", sock_fd);
+            close(sock_fd);
             break;
         }
     }
+
+    pthread_exit(0);
 }
 
 static void accept_loop() {
     int sock_fd;
+    pthread_t tid;
 
     while ((sock_fd = accept(server_fd, (struct sockaddr *) &server_addr, &addr_len)) >= 0) {
-        handle_connection(sock_fd);
+        int *sock_fd_copy = malloc(4);
+        *sock_fd_copy = sock_fd;
+        if (pthread_create(&tid, 0, handle_connection, sock_fd_copy) < 0) {
+            perror("pthread_create failed");
+        }
+        else {
+            printf("got request with fd: %d\n", sock_fd);
+        }
     }
 
     if (sock_fd < 0) {

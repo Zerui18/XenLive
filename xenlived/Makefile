@@ -9,7 +9,7 @@ THEOS_DEVICE_PORT = 2222
 
 TOOL_NAME = xenlived
 
-xenlived_FILES = src/main.m src/tools.c
+xenlived_FILES = src/main.c src/tools.c src/objc.m
 xenlived_CFLAGS = -fobjc-arc -Wno-error -I.. -I includes
 xenlived_CODESIGN_FLAGS = -Sentitlements.plist
 xenlived_INSTALL_PATH = /usr/local/bin

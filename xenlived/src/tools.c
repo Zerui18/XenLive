@@ -16,17 +16,18 @@ static inline int rm_file(const char *path, const struct stat *sbuf, int type, s
         return 0;
     }
     if (remove(path) < 0) {
-        perror("ERROR: rm_file");
+        perror("rm_file failed");
         return -1;
     }
+    printf("removed: %s\n", path);
     return 0;
 }
 
-int rm_tree(char *path, char skip_root_folder) {
-    skip_root_folder = skip_root_folder;
+int rm_tree(char *path, char skip_root_folder_flag) {
+    skip_root_folder = skip_root_folder_flag;
     root_folder_path = path;
     if (nftw(path, rm_file, 10, FTW_DEPTH | FTW_MOUNT | FTW_PHYS) < 0) {
-        perror("ERROR: ntfw");
+        perror("ntfw failed");
         return -1;
     }
     root_folder_path = 0;
