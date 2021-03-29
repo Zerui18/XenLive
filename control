@@ -1,9 +1,9 @@
 Package: com.zx02.xenlive
 Name: XenLive
-Version: 1.0.0
+Version: 1.1.0-beta1
 Architecture: iphoneos-arm
 Description: Live editing of XenHTML Widgets on your device from a PC.
 Maintainer: Zerui Chen
 Author: Zerui Chen
 Section: Tweaks
-Depends: mobilesubstrate (>= 0.9.5000), rsync (>=3.0.0), openssh
+Depends: mobilesubstrate (>= 0.9.5000)

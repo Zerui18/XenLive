@@ -17,10 +17,18 @@
 
 #define RESP_OK "ok!"
 #define RESP_ERR "err"
+#define MAX_CONN_THREADS 5
 
 int server_fd;
 struct sockaddr_in server_addr;
 unsigned int addr_len = sizeof(server_addr);
+
+// Note: tids is accessed from multiple threads but it should be sparse enough to not require mutex.
+pthread_t *tids[MAX_CONN_THREADS];
+typedef struct {
+    pthread_t tid;
+    int conn_fd;
+} conn_args;
 
 int is_regular_file(const char *path) {
     struct stat path_stat;
@@ -31,10 +39,18 @@ int is_regular_file(const char *path) {
 // Found in objc.m
 void notify_tweak(char *widget_name, char is_config);
 
-static void handle_request(request_header header, int sock_fd) {
-    char *widget_name = read_into_cstr(sock_fd, header.widget_name_len);
-    char *widget_type = read_into_cstr(sock_fd, header.widget_type_len);
-    char *rel_path = read_into_cstr(sock_fd, header.file_relative_path_len);
+static void handle_request(request_header header, int conn_fd) {
+
+    // Special request that takes no parameters.
+    if (header.opcode == request_restart) {
+        // Close server_fd and exit.
+        close(server_fd);
+        exit(0);
+    }
+
+    char *widget_name = read_into_cstr(conn_fd, header.widget_name_len);
+    char *widget_type = read_into_cstr(conn_fd, header.widget_type_len);
+    char *rel_path = read_into_cstr(conn_fd, header.file_relative_path_len);
     char file_path[256];
     sprintf(file_path, "/var/mobile/Library/Widgets/%s/%s/%s", widget_type, widget_name, rel_path);
     // Success only reflect the status of getting the file_path correctly,
@@ -46,7 +62,7 @@ static void handle_request(request_header header, int sock_fd) {
         case request_write: {
             // Open file, allowing creation and always clearing initial contents.
             int target_fd = open(file_path, O_WRONLY | O_CREAT | O_TRUNC, 0664);
-            success = copy_into_file(sock_fd, target_fd, header.file_data_len);
+            success = copy_into_file(conn_fd, target_fd, header.file_data_len);
             break;
         }
         case request_delete:
@@ -71,6 +87,7 @@ static void handle_request(request_header header, int sock_fd) {
             // Perform full reload.
             notify_tweak(widget_name, 1);
             goto end;
+            break;
     }
 
     char *filename = basename(file_path);
@@ -83,14 +100,37 @@ static void handle_request(request_header header, int sock_fd) {
     free(rel_path);
 
     // Respond.
-    write(sock_fd, success ? RESP_OK : RESP_ERR, 4);
+    write(conn_fd, success ? RESP_OK : RESP_ERR, 4);
+}
+
+static void cleanup_connection(conn_args *args) {
+    close(args->conn_fd);
+    char found_thread = 0;
+    // Remove this thread from the global tids.
+    printf("cleaning up %d\n", args->conn_fd);
+    for (int i=0; i<MAX_CONN_THREADS; i++) {
+        // Find this thread.
+        printf("%d\n", tids[i]);
+        if (tids[i] && pthread_equal(args->tid, *tids[i]) == 0) {
+            found_thread = 1;
+            printf("found tid at %d\n", i);
+            continue;
+        }
+        // Remove spaces in tids.
+        // If found_thread, move current tid back a slot.
+        if (found_thread) {
+            tids[i-1] = tids[i];
+            tids[i] = 0;
+        }
+    }
+    free(args);
 }
 
 // Note: this is run is a new thread.
-static void *handle_connection(int *sock_fd_ptr) {
-    int sock_fd = *sock_fd_ptr;
-    printf("handle connection with fd: %d\n", sock_fd);
-    free(sock_fd_ptr);
+static void *handle_connection(conn_args *args) {
+    int conn_fd = args->conn_fd;
+    printf("handle connection with fd: %d\n", conn_fd);
+    pthread_cleanup_push(cleanup_connection, args);
 
     int idle_cnt = 0;
     request_header header;
@@ -98,58 +138,74 @@ static void *handle_connection(int *sock_fd_ptr) {
     while (1) {
         // Block till new data is available.
         struct pollfd pollfd = {
-            .fd = sock_fd,
+            .fd = conn_fd,
             .events = POLLIN,
             .revents = 0
         };
         // 5s of timeout, bad things might happen if we do -1.
         poll(&pollfd, 1, 1000);
-        printf("client socket poll %d:\n", sock_fd);
+        printf("client socket poll %d:\n", conn_fd);
         // Case 1: socket closed.
         if (pollfd.revents & POLLHUP) {
             // Socket closed by client, exit thread.
-            printf("client socket closed %d\n", sock_fd);
+            printf("client socket closed %d\n", conn_fd);
             break;
         }
         // Case 2: new connection.
         else if (pollfd.revents & POLLIN) {
             idle_cnt = 0;
             // Data is available.
-            printf("client socket available %d %d\n", sock_fd, pollfd.revents & POLLHUP);
-            read(sock_fd, &header, sizeof(header));
+            printf("client socket available %d %d\n", conn_fd, pollfd.revents & POLLHUP);
+            read(conn_fd, &header, sizeof(header));
             // Validate request header.
             if (strcmp(header.magic, "ZXL\0") == 0)
-                handle_request(header, sock_fd);
+                handle_request(header, conn_fd);
         }
         // Case 3: just empty.
         else if (++idle_cnt == 1800) {
             // 30 mins of inactivity, client might be offline.
             // Close socket and exit thread.
-            printf("idle_cnt == 1800, closing %d\n", sock_fd);
-            close(sock_fd);
+            printf("idle_cnt == 1800, closing %d\n", conn_fd);
             break;
         }
     }
 
+    pthread_cleanup_pop(1);
     pthread_exit(0);
 }
 
 static void accept_loop() {
-    int sock_fd;
-    pthread_t tid;
+    int conn_fd;
 
-    while ((sock_fd = accept(server_fd, (struct sockaddr *) &server_addr, &addr_len)) >= 0) {
-        int *sock_fd_copy = malloc(4);
-        *sock_fd_copy = sock_fd;
-        if (pthread_create(&tid, 0, handle_connection, sock_fd_copy) < 0) {
-            perror("pthread_create failed");
+    while ((conn_fd = accept(server_fd, (struct sockaddr *) &server_addr, &addr_len)) >= 0) {
+        conn_args *args = malloc(sizeof(conn_args));
+        args->conn_fd = conn_fd;
+        // Find empty slot in tids or cancel the 1st thread there.
+        int i = 0;
+        while (i<MAX_CONN_THREADS) {
+            if (!tids[i]) {
+                printf("found empty slot at: %d\n", i);
+                break;
+            }
+            i++;
         }
-        else {
-            printf("got request with fd: %d\n", sock_fd);
+        // If no empyt slot found, cancel the 1st thread.
+        if (i == MAX_CONN_THREADS) {
+            printf("no empty slot, cancelling 1st thread\n");
+            pthread_cancel(*tids[0]);
+            // Wait for the thread to perform cleanup and terminate.
+            pthread_join(*tids[0], 0);
+            // Now the last slot should be open.
+            i = MAX_CONN_THREADS - 1;
+        }
+        // Apparently pthread_create doesn't malloc, so we do it manually to prevent SEGFAULT.
+        tids[i] = malloc(sizeof(pthread_t));
+        if (pthread_create(tids[i], 0, handle_connection, args) < 0) {
+            perror("pthread_create failed");
         }
     }
 
-    if (sock_fd < 0) {
+    if (conn_fd < 0) {
         perror("accept failed");
     }
 
