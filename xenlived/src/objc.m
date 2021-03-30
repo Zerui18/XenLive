@@ -7,5 +7,4 @@ void notify_tweak(char *widget_name, char is_config) {
         @"widgetName" : [NSString stringWithUTF8String: widget_name],
         @"isConfig" : [NSNumber numberWithChar: is_config]
     } deliverImmediately: true];
-    NSLog(@"notification posted");
 }

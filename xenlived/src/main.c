@@ -36,7 +36,7 @@ int is_regular_file(const char *path) {
     return S_ISREG(path_stat.st_mode);
 }
 
-// Found in objc.m
+// Implemented in objc.m
 void notify_tweak(char *widget_name, char is_config);
 
 static void handle_request(request_header header, int conn_fd) {
@@ -53,6 +53,7 @@ static void handle_request(request_header header, int conn_fd) {
     char *rel_path = read_into_cstr(conn_fd, header.file_relative_path_len);
     char file_path[256];
     sprintf(file_path, "/var/mobile/Library/Widgets/%s/%s/%s", widget_type, widget_name, rel_path);
+    printf("got filepath: %s\n", file_path);
     // Success only reflect the status of getting the file_path correctly,
     // as well as writing to the file. We don't want to give too many errors.
     char success = 1;
@@ -62,7 +63,14 @@ static void handle_request(request_header header, int conn_fd) {
         case request_write: {
             // Open file, allowing creation and always clearing initial contents.
             int target_fd = open(file_path, O_WRONLY | O_CREAT | O_TRUNC, 0664);
-            success = copy_into_file(conn_fd, target_fd, header.file_data_len);
+            if (target_fd < 0) {
+                success = 0;
+                perror("open failed");
+            }
+            else {
+                success = copy_into_file(conn_fd, target_fd, header.file_data_len);
+            }
+            close(target_fd);
             break;
         }
         case request_delete:
@@ -90,8 +98,10 @@ static void handle_request(request_header header, int conn_fd) {
             break;
     }
 
-    char *filename = basename(file_path);
-    notify_tweak(widget_name, strcmp(filename, "config.json") == 0);
+    if (header.options & option_perform_refresh) {
+        char *filename = basename(file_path);
+        notify_tweak(widget_name, strcmp(filename, "config.json") == 0);
+    }
 
     end:
 
@@ -144,7 +154,6 @@ static void *handle_connection(conn_args *args) {
         };
         // 5s of timeout, bad things might happen if we do -1.
         poll(&pollfd, 1, 1000);
-        printf("client socket poll %d:\n", conn_fd);
         // Case 1: socket closed.
         if (pollfd.revents & POLLHUP) {
             // Socket closed by client, exit thread.
@@ -155,7 +164,6 @@ static void *handle_connection(conn_args *args) {
         else if (pollfd.revents & POLLIN) {
             idle_cnt = 0;
             // Data is available.
-            printf("client socket available %d %d\n", conn_fd, pollfd.revents & POLLHUP);
             read(conn_fd, &header, sizeof(header));
             // Validate request header.
             if (strcmp(header.magic, "ZXL\0") == 0)

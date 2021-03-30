@@ -14,4 +14,7 @@ typedef struct {
     unsigned int widget_type_len;
     unsigned int file_relative_path_len;
     unsigned int file_data_len;
+    unsigned int options;
 } request_header;
+
+#define option_perform_refresh 1<<0
