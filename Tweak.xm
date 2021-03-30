@@ -51,6 +51,9 @@
         }
         else {
             // Simply reload the webview.
+            // Note that we should clear both disk & memory cache first or WKWebView might prefer to use it.
+            NSSet *dataTypes = [NSSet setWithArray:@[WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache]];
+            [[WKWebsiteDataStore defaultDataStore] removeDataOfTypes:dataTypes modifiedSince: [NSDate dateWithTimeIntervalSince1970:0] completionHandler: ^{}];
             [self.webView reload];
         }
     }
