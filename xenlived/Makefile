@@ -4,7 +4,7 @@ CFLAGS = -Wno-error
 
 include $(THEOS)/makefiles/common.mk
 
-THEOS_DEVICE_IP = localhost
+THEOS_DEVICE_IP = 192.168.0.112
 THEOS_DEVICE_PORT = 2222
 
 TOOL_NAME = xenlived

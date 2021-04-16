@@ -2,4 +2,4 @@
 
 launchctl stop com.zx02.xenlived
 launchctl unload /Library/LaunchDaemons/com.zx02.xenlived.plist
-launchctl load /Library/LaunchDaemons/com.zx02.xenlived.plist
+launchctl load -w /Library/LaunchDaemons/com.zx02.xenlived.plist

@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <signal.h>
@@ -120,10 +121,9 @@ static void cleanup_connection(conn_args *args) {
     printf("cleaning up %d\n", args->conn_fd);
     for (int i=0; i<MAX_CONN_THREADS; i++) {
         // Find this thread.
-        printf("%d\n", tids[i]);
         if (tids[i] && pthread_equal(args->tid, *tids[i]) == 0) {
             found_thread = 1;
-            printf("found tid at %d\n", i);
+            // printf("found tid at %d\n", i);
             continue;
         }
         // Remove spaces in tids.
@@ -136,10 +136,25 @@ static void cleanup_connection(conn_args *args) {
     free(args);
 }
 
+#define setsockopt_check(expr) if (expr < 0) { perror("setsockopt_check failed"); return; }
+
+void enable_keepalive(int sock) {
+    int yes = 1;
+    setsockopt_check(setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(int)))
+
+    int interval = 1;
+    setsockopt_check(setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(int)));
+
+    int maxpkt = 3;
+    setsockopt_check(setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &maxpkt, sizeof(int)));
+}
+
 // Note: this is run is a new thread.
 static void *handle_connection(conn_args *args) {
     int conn_fd = args->conn_fd;
     printf("handle connection with fd: %d\n", conn_fd);
+
+    enable_keepalive(conn_fd);
     pthread_cleanup_push(cleanup_connection, args);
 
     int idle_cnt = 0;
@@ -152,7 +167,7 @@ static void *handle_connection(conn_args *args) {
             .events = POLLIN,
             .revents = 0
         };
-        // 5s of timeout, bad things might happen if we do -1.
+        // 1s of timeout, bad things might happen if we do -1.
         poll(&pollfd, 1, 1000);
         // Case 1: socket closed.
         if (pollfd.revents & POLLHUP) {
