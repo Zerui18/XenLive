@@ -154,7 +154,7 @@ static void *handle_connection(conn_args *args) {
     int conn_fd = args->conn_fd;
     printf("handle connection with fd: %d\n", conn_fd);
 
-    enable_keepalive(conn_fd);
+    // enable_keepalive(conn_fd);
     pthread_cleanup_push(cleanup_connection, args);
 
     int idle_cnt = 0;
